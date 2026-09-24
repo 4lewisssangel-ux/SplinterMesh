@@ -307,23 +307,18 @@ class SplinterMeshViewModel(application: Application) : AndroidViewModel(applica
         try {
             systemAudioCaptureManager.setMediaProjection(projection)
             val success = systemAudioCaptureManager.startSystemLoopbackCapture()
-            if (!success) {
-                systemAudioCaptureManager.startOfflineRadioSynthesizer()
+            if (success) {
+                _isRadioActive.value = true
+                _snackbarMessage.value = "System Audio Capture active — Streaming music"
+            } else {
+                _isRadioActive.value = false
+                _snackbarMessage.value = "Failed to start system audio capture"
             }
-            _isRadioActive.value = true
-            _snackbarMessage.value = "System Audio Capture active"
         } catch (e: Throwable) {
             e.printStackTrace()
-            systemAudioCaptureManager.startOfflineRadioSynthesizer()
-            _isRadioActive.value = true
-            _snackbarMessage.value = "Capture fallback active: Offline Radio Wave"
+            _isRadioActive.value = false
+            _snackbarMessage.value = "Audio capture error: ${e.localizedMessage ?: "Unknown error"}"
         }
-    }
-
-    fun startOfflineRadioSynth(genre: String = "Lo-Fi Wave") {
-        systemAudioCaptureManager.startOfflineRadioSynthesizer(genre)
-        _isRadioActive.value = true
-        _snackbarMessage.value = "Broadcasting $genre radio across mesh"
     }
 
     fun stopRadio() {

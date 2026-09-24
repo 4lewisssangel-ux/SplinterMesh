@@ -30,16 +30,14 @@ class SystemAudioCaptureManager(
     private var captureRecord: AudioRecord? = null
     private var mediaProjection: MediaProjection? = null
     private val isCapturing = AtomicBoolean(false)
-    private val isSynthBroadcasting = AtomicBoolean(false)
 
     private val _isBroadcasting = MutableStateFlow(false)
     val isBroadcasting: StateFlow<Boolean> = _isBroadcasting.asStateFlow()
 
-    private val _broadcastMode = MutableStateFlow("Inactive") // "System Loopback", "Offline Radio Synth", "Inactive"
+    private val _broadcastMode = MutableStateFlow("Inactive") // "System Loopback", "Inactive"
     val broadcastMode: StateFlow<String> = _broadcastMode.asStateFlow()
 
     private var captureJob: Job? = null
-    private var synthJob: Job? = null
 
     fun setMediaProjection(projection: MediaProjection) {
         this.mediaProjection = projection
@@ -49,19 +47,14 @@ class SystemAudioCaptureManager(
     fun startSystemLoopbackCapture(): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             // Android 10+ required for AudioPlaybackCapture
-            startOfflineRadioSynthesizer("Offline Synth (Android 9 or lower)")
             return false
         }
-        val projection = mediaProjection
-        if (projection == null) {
-            startOfflineRadioSynthesizer("Offline Synth (Capture Not Available)")
-            return false
-        }
+        val projection = mediaProjection ?: return false
 
         stopBroadcasting()
         isCapturing.set(true)
         _isBroadcasting.value = true
-        _broadcastMode.value = "System Loopback (Spotify/YT)"
+        _broadcastMode.value = "System Audio (Spotify/YT/Music)"
 
         // Start Foreground Service required on Android 10+ for MediaProjection capture
         try {
@@ -110,9 +103,8 @@ class SystemAudioCaptureManager(
                     .build()
 
                 if (record.state != AudioRecord.STATE_INITIALIZED) {
-                    // System audio capture might be restricted by OEM or permission not yet active
                     record.release()
-                    startOfflineRadioSynthesizer("Offline Synth (Hardware Fallback)")
+                    stopBroadcasting()
                     return@launch
                 }
 
@@ -134,14 +126,12 @@ class SystemAudioCaptureManager(
 
                         audioMeshEngine.broadcastRadioAudioFrame(buffer, readBytes, level)
                     } else if (readBytes < 0) {
-                        // Error reading from record
                         break
                     }
                 }
             } catch (e: Throwable) {
                 e.printStackTrace()
-                // Graceful fallback to offline synth if loopback unsupported in device/emulator
-                startOfflineRadioSynthesizer("Offline Synth (Capture Fallback)")
+                stopBroadcasting()
             } finally {
                 stopCaptureInternal()
             }
@@ -149,63 +139,8 @@ class SystemAudioCaptureManager(
         return true
     }
 
-    /**
-     * Built-in Offline Radio Stream Synthesizer.
-     * Generates a warm, low-latency audio stream with melodic chord progressions,
-     * sub-bass and beats so users can immediately broadcast and hear live radio
-     * across connected nodes without requiring an active external music app.
-     */
-    fun startOfflineRadioSynthesizer(genre: String = "Lo-Fi Mesh Wave") {
-        stopBroadcasting()
-        isSynthBroadcasting.set(true)
-        _isBroadcasting.value = true
-        _broadcastMode.value = "Offline Radio ($genre)"
-
-        synthJob = coroutineScope.launch(Dispatchers.Default) {
-            val sampleRate = AudioMeshEngine.SAMPLE_RATE
-            val bufferSize = AudioMeshEngine.BUFFER_SIZE
-            val pcmBuffer = ByteArray(bufferSize)
-
-            val notes = doubleArrayOf(220.0, 261.63, 329.63, 392.0, 440.0) // A3 minor pentatonic
-            var currentNoteIdx = 0
-            var sampleCounter = 0L
-
-            while (isSynthBroadcasting.get() && isActive) {
-                val baseFreq = notes[currentNoteIdx]
-                val subFreq = baseFreq / 2.0
-
-                for (i in 0 until bufferSize step 2) {
-                    val t = sampleCounter.toDouble() / sampleRate
-                    // Harmonic synthesis: base wave + sub bass + envelope modulation
-                    val envelope = 0.7 + 0.3 * sin(2 * PI * 1.5 * t)
-                    val s1 = sin(2 * PI * baseFreq * t) * 0.4
-                    val s2 = sin(2 * PI * subFreq * t) * 0.35
-                    val s3 = sin(2 * PI * (baseFreq * 1.5) * t) * 0.15
-
-                    val sampleVal = ((s1 + s2 + s3) * envelope * 14000.0).toInt().coerceIn(-32767, 32767).toShort()
-
-                    pcmBuffer[i] = (sampleVal.toInt() and 0xFF).toByte()
-                    pcmBuffer[i + 1] = ((sampleVal.toInt() shr 8) and 0xFF).toByte()
-                    sampleCounter++
-                }
-
-                // Change note every 0.6 seconds
-                if (sampleCounter % (sampleRate * 0.6).toLong() < bufferSize / 2) {
-                    currentNoteIdx = (currentNoteIdx + 1) % notes.size
-                }
-
-                val level: Byte = 70
-                audioMeshEngine.broadcastRadioAudioFrame(pcmBuffer, bufferSize, level)
-
-                // ~20ms frame delay (bufferSize 640 bytes at 16kHz 16-bit = 20ms)
-                delay(19)
-            }
-        }
-    }
-
     fun stopBroadcasting() {
         isCapturing.set(false)
-        isSynthBroadcasting.set(false)
         _isBroadcasting.value = false
         _broadcastMode.value = "Inactive"
 
@@ -216,7 +151,6 @@ class SystemAudioCaptureManager(
         }
 
         captureJob?.cancel()
-        synthJob?.cancel()
         stopCaptureInternal()
     }
 

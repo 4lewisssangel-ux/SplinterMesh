@@ -26,9 +26,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Cast
-import androidx.compose.material.icons.filled.GraphicEq
-import androidx.compose.material.icons.filled.MusicNote
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Radio
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.VolumeDown
@@ -39,7 +36,6 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -81,12 +77,9 @@ fun RadioScreen(
                 val projection = mpManager?.getMediaProjection(result.resultCode, result.data!!)
                 if (projection != null) {
                     viewModel.setMediaProjectionForRadio(projection)
-                } else {
-                    viewModel.startOfflineRadioSynth("Universal Loopback")
                 }
             } catch (e: Throwable) {
                 e.printStackTrace()
-                viewModel.startOfflineRadioSynth("Universal Loopback (Fallback)")
             }
         }
     }
@@ -257,8 +250,6 @@ fun RadioScreen(
                         val mpManager = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as? MediaProjectionManager
                         if (mpManager != null) {
                             mediaProjectionManager.launch(mpManager.createScreenCaptureIntent())
-                        } else {
-                            viewModel.startOfflineRadioSynth("Universal Loopback")
                         }
                     },
                     modifier = Modifier
@@ -271,76 +262,6 @@ fun RadioScreen(
                     Text("START SYSTEM AUDIO CAPTURE", fontWeight = FontWeight.Bold)
                 }
             }
-        }
-
-        // Built-in Offline Radio Stream Presets
-        Text(
-            text = "OFFLINE RADIO SYNTHESIZER PRESETS",
-            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Black, letterSpacing = 1.sp),
-            color = MaterialTheme.colorScheme.primary
-        )
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            RadioStationPresetButton(
-                title = "Lo-Fi Wave",
-                subtitle = "Chill Synth",
-                onClick = { viewModel.startOfflineRadioSynth("Lo-Fi Wave") },
-                modifier = Modifier.weight(1f)
-            )
-            RadioStationPresetButton(
-                title = "Cyber Ambient",
-                subtitle = "Sub-Bass Beat",
-                onClick = { viewModel.startOfflineRadioSynth("Cyber Ambient") },
-                modifier = Modifier.weight(1f)
-            )
-            RadioStationPresetButton(
-                title = "Acoustic Tone",
-                subtitle = "Harmonic 440Hz",
-                onClick = { viewModel.startOfflineRadioSynth("Acoustic Tone") },
-                modifier = Modifier.weight(1f)
-            )
-        }
-    }
-}
-
-@Composable
-private fun RadioStationPresetButton(
-    title: String,
-    subtitle: String,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Surface(
-        onClick = onClick,
-        modifier = modifier,
-        shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        tonalElevation = 2.dp
-    ) {
-        Column(
-            modifier = Modifier.padding(12.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Icon(
-                imageVector = Icons.Default.MusicNote,
-                contentDescription = title,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(24.dp)
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = title,
-                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
         }
     }
 }
