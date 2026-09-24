@@ -49,17 +49,42 @@ class SystemAudioCaptureManager(
     fun startSystemLoopbackCapture(): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             // Android 10+ required for AudioPlaybackCapture
+            startOfflineRadioSynthesizer("Offline Synth (Android 9 or lower)")
             return false
         }
-        val projection = mediaProjection ?: return false
+        val projection = mediaProjection
+        if (projection == null) {
+            startOfflineRadioSynthesizer("Offline Synth (Capture Not Available)")
+            return false
+        }
 
         stopBroadcasting()
         isCapturing.set(true)
         _isBroadcasting.value = true
         _broadcastMode.value = "System Loopback (Spotify/YT)"
 
+        // Start Foreground Service required on Android 10+ for MediaProjection capture
+        try {
+            com.example.service.AudioCaptureService.startService(context)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
         captureJob = coroutineScope.launch(Dispatchers.IO) {
             try {
+                // Register callback on projection as required on newer Android versions
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                    try {
+                        projection.registerCallback(object : MediaProjection.Callback() {
+                            override fun onStop() {
+                                stopBroadcasting()
+                            }
+                        }, null)
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+                }
+
                 val config = AudioPlaybackCaptureConfiguration.Builder(projection)
                     .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
                     .addMatchingUsage(AudioAttributes.USAGE_GAME)
@@ -78,17 +103,25 @@ class SystemAudioCaptureManager(
                     .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
                     .build()
 
-                captureRecord = AudioRecord.Builder()
+                val record = AudioRecord.Builder()
                     .setAudioPlaybackCaptureConfig(config)
                     .setAudioFormat(audioFormat)
                     .setBufferSizeInBytes(minBuf)
                     .build()
 
-                captureRecord?.startRecording()
+                if (record.state != AudioRecord.STATE_INITIALIZED) {
+                    // System audio capture might be restricted by OEM or permission not yet active
+                    record.release()
+                    startOfflineRadioSynthesizer("Offline Synth (Hardware Fallback)")
+                    return@launch
+                }
+
+                captureRecord = record
+                record.startRecording()
                 val buffer = ByteArray(AudioMeshEngine.BUFFER_SIZE)
 
                 while (isCapturing.get() && isActive) {
-                    val readBytes = captureRecord?.read(buffer, 0, buffer.size) ?: 0
+                    val readBytes = record.read(buffer, 0, buffer.size)
                     if (readBytes > 0) {
                         // Calculate level
                         var sum = 0.0
@@ -100,12 +133,15 @@ class SystemAudioCaptureManager(
                         val level = ((rms / 10000.0) * 100).toInt().coerceIn(10, 100).toByte()
 
                         audioMeshEngine.broadcastRadioAudioFrame(buffer, readBytes, level)
+                    } else if (readBytes < 0) {
+                        // Error reading from record
+                        break
                     }
                 }
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 e.printStackTrace()
-                // Fallback to offline synth if loopback unsupported in container
-                startOfflineRadioSynthesizer()
+                // Graceful fallback to offline synth if loopback unsupported in device/emulator
+                startOfflineRadioSynthesizer("Offline Synth (Capture Fallback)")
             } finally {
                 stopCaptureInternal()
             }
@@ -172,6 +208,12 @@ class SystemAudioCaptureManager(
         isSynthBroadcasting.set(false)
         _isBroadcasting.value = false
         _broadcastMode.value = "Inactive"
+
+        try {
+            com.example.service.AudioCaptureService.stopService(context)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
 
         captureJob?.cancel()
         synthJob?.cancel()

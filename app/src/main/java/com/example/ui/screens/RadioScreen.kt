@@ -76,10 +76,17 @@ fun RadioScreen(
         contract = ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK && result.data != null) {
-            val mpManager = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as? MediaProjectionManager
-            val projection = mpManager?.getMediaProjection(result.resultCode, result.data!!)
-            if (projection != null) {
-                viewModel.setMediaProjectionForRadio(projection)
+            try {
+                val mpManager = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as? MediaProjectionManager
+                val projection = mpManager?.getMediaProjection(result.resultCode, result.data!!)
+                if (projection != null) {
+                    viewModel.setMediaProjectionForRadio(projection)
+                } else {
+                    viewModel.startOfflineRadioSynth("Universal Loopback")
+                }
+            } catch (e: Throwable) {
+                e.printStackTrace()
+                viewModel.startOfflineRadioSynth("Universal Loopback (Fallback)")
             }
         }
     }
