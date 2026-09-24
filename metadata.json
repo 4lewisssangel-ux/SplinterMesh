@@ -1,0 +1,6 @@
+{
+  "name": "SplinterMesh",
+  "description": "Offline peer-to-peer hotspot intercom, mesh chat, and real-time audio broadcast.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

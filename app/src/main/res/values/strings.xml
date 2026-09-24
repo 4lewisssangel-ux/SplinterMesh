@@ -1,0 +1,12 @@
+<resources>
+    <string name="app_name">SplinterMesh</string>
+    <string name="nav_intercom">Intercom</string>
+    <string name="nav_radio">Live Radio</string>
+    <string name="nav_chat">Mesh Chat</string>
+    <string name="nav_settings">Settings</string>
+    <string name="ptt_hold_to_talk">HOLD TO TALK</string>
+    <string name="ptt_transmitting">TRANSMITTING…</string>
+    <string name="handsfree_active">OPEN MIC ACTIVE</string>
+    <string name="handsfree_inactive">HANDS-FREE OFF</string>
+    <string name="tagline">Powered by SplinterMesh | Dev: Astilla</string>
+</resources>
