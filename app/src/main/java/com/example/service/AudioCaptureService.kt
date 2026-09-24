@@ -56,10 +56,7 @@ class AudioCaptureService : Service() {
             else -> {
                 val notification = buildNotification()
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    var foregroundServiceType = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                        foregroundServiceType = foregroundServiceType or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
-                    }
+                    val foregroundServiceType = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
                     startForeground(NOTIFICATION_ID, notification, foregroundServiceType)
                 } else {
                     startForeground(NOTIFICATION_ID, notification)

@@ -50,6 +50,8 @@ class HostServer(
     private var heartbeatCheckJob: Job? = null
 
     private var hostIp: String = "192.168.43.1"
+    private var currentRadioIsBroadcasting: Boolean = false
+    private var currentRadioTitle: String = "Inactive"
 
     inner class ClientConnection(
         val nodeId: Int,
@@ -170,6 +172,15 @@ class HostServer(
 
                     // Broadcast updated node list to all clients
                     broadcastNodeList()
+
+                    // If radio is currently broadcasting on Host, inform the newly joined client
+                    if (currentRadioIsBroadcasting) {
+                        val currentRadioMsg = MeshControlMessage.RadioState(
+                            isBroadcasting = true,
+                            title = currentRadioTitle
+                        ).toJsonString()
+                        connection.send(currentRadioMsg)
+                    }
 
                     // Listen for subsequent messages from this client
                     listenToClient(connection)
@@ -309,6 +320,8 @@ class HostServer(
     }
 
     fun broadcastRadioState(isBroadcasting: Boolean, title: String) {
+        currentRadioIsBroadcasting = isBroadcasting
+        currentRadioTitle = title
         val msg = MeshControlMessage.RadioState(isBroadcasting, title).toJsonString()
         broadcastAll(msg)
     }

@@ -74,21 +74,33 @@ class AudioMeshEngine(
         myNodeId = nodeId
     }
 
+    fun setRadioTransmitting(transmitting: Boolean) {
+        isRadioStreaming.set(transmitting)
+        if (!transmitting) {
+            _radioAmplitude.value = 0f
+        }
+    }
+
     fun updateTargetIps(ips: List<String>) {
         synchronized(targetIpList) {
             targetIpList.clear()
             for (ip in ips) {
                 try {
-                    targetIpList.add(InetAddress.getByName(ip))
+                    val addr = InetAddress.getByName(ip)
+                    if (!targetIpList.contains(addr)) {
+                        targetIpList.add(addr)
+                    }
                 } catch (e: Exception) {
                     e.printStackTrace()
                 }
             }
-            // Also add subnet broadcast address
-            try {
-                targetIpList.add(NetworkUtils.getBroadcastAddress())
-            } catch (e: Exception) {
-                e.printStackTrace()
+            // If no individual client IPs connected yet, broadcast to subnet
+            if (targetIpList.isEmpty()) {
+                try {
+                    targetIpList.add(NetworkUtils.getBroadcastAddress())
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
             }
         }
     }
@@ -97,18 +109,27 @@ class AudioMeshEngine(
         if (isRunning.getAndSet(true)) return
 
         try {
-            udpSocket = DatagramSocket(MeshConstants.UDP_AUDIO_PORT).apply {
-                broadcast = true
+            val socket = DatagramSocket(null).apply {
                 reuseAddress = true
+                broadcast = true
                 soTimeout = 2000
+                bind(java.net.InetSocketAddress(MeshConstants.UDP_AUDIO_PORT))
             }
+            udpSocket = socket
         } catch (e: Exception) {
             e.printStackTrace()
             try {
-                // If binding to 8889 directly fails, try fallback
-                udpSocket = DatagramSocket().apply { broadcast = true }
+                udpSocket = DatagramSocket(MeshConstants.UDP_AUDIO_PORT).apply {
+                    broadcast = true
+                    soTimeout = 2000
+                }
             } catch (ex: Exception) {
                 ex.printStackTrace()
+                try {
+                    udpSocket = DatagramSocket().apply { broadcast = true }
+                } catch (exc: Exception) {
+                    exc.printStackTrace()
+                }
             }
         }
 
@@ -191,15 +212,14 @@ class AudioMeshEngine(
                     val senderId = buffer[2].toInt()
                     val volumeLevel = buffer[4].toInt() and 0xFF
 
-                    // Don't loop back our own voice transmissions
-                    if (senderId == myNodeId && isRecording.get()) {
-                        continue
-                    }
-
                     val audioDataLength = packet.length - HEADER_SIZE
                     val audioData = buffer.copyOfRange(HEADER_SIZE, packet.length)
 
                     if (packetType == MeshConstants.AUDIO_TYPE_INTERCOM) {
+                        // Don't loop back our own voice transmissions
+                        if (senderId == myNodeId) {
+                            continue
+                        }
                         // Mark voice activity for smart ducking
                         lastIntercomVoiceMs = System.currentTimeMillis()
                         applyDucking(true)
@@ -209,6 +229,20 @@ class AudioMeshEngine(
 
                         intercomAudioTrack?.write(audioData, 0, audioDataLength)
                     } else if (packetType == MeshConstants.AUDIO_TYPE_RADIO) {
+                        // Do not play incoming radio audio if this node is currently the one transmitting it
+                        if (isRadioStreaming.get()) {
+                            continue
+                        }
+
+                        // Ensure radio track is playing
+                        if (radioAudioTrack?.playState != AudioTrack.PLAYSTATE_PLAYING) {
+                            try {
+                                radioAudioTrack?.play()
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                            }
+                        }
+
                         // If radio is ducked, lower volume is enforced by AudioTrack.setVolume
                         _radioAmplitude.value = (volumeLevel / 100f).coerceIn(0.05f, 1.0f)
                         radioAudioTrack?.write(audioData, 0, audioDataLength)
@@ -243,15 +277,22 @@ class AudioMeshEngine(
         }
     }
 
+    private var userRadioVolume: Float = 1.0f
+
+    fun setRadioVolume(volume: Float) {
+        userRadioVolume = volume.coerceIn(0f, 1f)
+        applyDucking(isDucked.get())
+    }
+
     private fun applyDucking(duck: Boolean) {
         isDucked.set(duck)
         _isAudioDuckingActive.value = duck
         try {
             if (duck) {
-                // Duck music by 75% -> remaining volume is 25% (0.25f)
-                radioAudioTrack?.setVolume(0.25f)
+                // Duck music by 75% -> remaining volume is 25% of user volume
+                radioAudioTrack?.setVolume(userRadioVolume * 0.25f)
             } else {
-                radioAudioTrack?.setVolume(1.0f)
+                radioAudioTrack?.setVolume(userRadioVolume)
             }
         } catch (e: Exception) {
             e.printStackTrace()
@@ -338,6 +379,7 @@ class AudioMeshEngine(
     }
 
     fun broadcastRadioAudioFrame(pcmData: ByteArray, length: Int, level: Byte) {
+        isRadioStreaming.set(true)
         val packetBytes = ByteArray(HEADER_SIZE + length)
         packetBytes[0] = 0x53.toByte() // 'S'
         packetBytes[1] = MeshConstants.AUDIO_TYPE_RADIO

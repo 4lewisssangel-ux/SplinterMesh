@@ -5,6 +5,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.media.projection.MediaProjection
+import android.net.Uri
 import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
@@ -20,6 +21,7 @@ import com.example.network.AudioMeshEngine
 import com.example.network.ClientSocket
 import com.example.network.ConnectionStatus
 import com.example.network.HostServer
+import com.example.network.MusicStreamManager
 import com.example.network.NetworkUtils
 import com.example.network.SystemAudioCaptureManager
 import com.example.ui.theme.ThemeOption
@@ -42,6 +44,7 @@ class SplinterMeshViewModel(application: Application) : AndroidViewModel(applica
     private val repository: SplinterRepository
     val audioMeshEngine: AudioMeshEngine
     val systemAudioCaptureManager: SystemAudioCaptureManager
+    val musicStreamManager: MusicStreamManager
 
     // Host & Client instances
     private var hostServer: HostServer? = null
@@ -83,6 +86,10 @@ class SplinterMeshViewModel(application: Application) : AndroidViewModel(applica
     private val _radioModeTitle = MutableStateFlow("Inactive")
     val radioModeTitle: StateFlow<String> = _radioModeTitle.asStateFlow()
 
+    // Client volume slider
+    private val _clientRadioVolume = MutableStateFlow(1.0f)
+    val clientRadioVolume: StateFlow<Float> = _clientRadioVolume.asStateFlow()
+
     // Theme Customization Engine
     private val _selectedTheme = MutableStateFlow(ThemeOption.DARK_SLATE)
     val selectedTheme: StateFlow<ThemeOption> = _selectedTheme.asStateFlow()
@@ -105,6 +112,7 @@ class SplinterMeshViewModel(application: Application) : AndroidViewModel(applica
 
         audioMeshEngine = AudioMeshEngine(viewModelScope)
         systemAudioCaptureManager = SystemAudioCaptureManager(context, viewModelScope, audioMeshEngine)
+        musicStreamManager = MusicStreamManager(context, viewModelScope, audioMeshEngine)
 
         audioMeshEngine.startEngine()
 
@@ -114,15 +122,35 @@ class SplinterMeshViewModel(application: Application) : AndroidViewModel(applica
         // Listen for radio state updates from capture manager
         viewModelScope.launch {
             systemAudioCaptureManager.isBroadcasting.collect { broadcasting ->
-                _isRadioActive.value = broadcasting
                 if (_operatingMode.value == OperatingMode.HOST) {
-                    hostServer?.broadcastRadioState(broadcasting, systemAudioCaptureManager.broadcastMode.value)
+                    if (broadcasting) {
+                        _isRadioActive.value = true
+                        _radioModeTitle.value = systemAudioCaptureManager.broadcastMode.value
+                        hostServer?.broadcastRadioState(true, _radioModeTitle.value)
+                    } else if (!musicStreamManager.isPlaying.value) {
+                        _isRadioActive.value = false
+                        _radioModeTitle.value = "Inactive"
+                        hostServer?.broadcastRadioState(false, "Inactive")
+                    }
                 }
             }
         }
+
+        // Listen for music stream playback updates
         viewModelScope.launch {
-            systemAudioCaptureManager.broadcastMode.collect { mode ->
-                _radioModeTitle.value = mode
+            musicStreamManager.isPlaying.collect { playing ->
+                if (_operatingMode.value == OperatingMode.HOST) {
+                    if (playing) {
+                        _isRadioActive.value = true
+                        val title = musicStreamManager.trackTitle.value ?: "Music File"
+                        _radioModeTitle.value = "Music: $title"
+                        hostServer?.broadcastRadioState(true, _radioModeTitle.value)
+                    } else if (!systemAudioCaptureManager.isBroadcasting.value) {
+                        _isRadioActive.value = false
+                        _radioModeTitle.value = "Inactive"
+                        hostServer?.broadcastRadioState(false, "Inactive")
+                    }
+                }
             }
         }
     }
@@ -224,6 +252,22 @@ class SplinterMeshViewModel(application: Application) : AndroidViewModel(applica
             }
         }
 
+        viewModelScope.launch {
+            client.isHostBroadcastingRadio.collect { active ->
+                if (_operatingMode.value == OperatingMode.CLIENT) {
+                    _isRadioActive.value = active
+                }
+            }
+        }
+
+        viewModelScope.launch {
+            client.radioTitle.collect { title ->
+                if (_operatingMode.value == OperatingMode.CLIENT) {
+                    _radioModeTitle.value = title
+                }
+            }
+        }
+
         // Start auto-discovery by default in client mode
         client.startAutoDiscovery()
     }
@@ -305,10 +349,14 @@ class SplinterMeshViewModel(application: Application) : AndroidViewModel(applica
     // Live System Audio Broadcast ("Splinter Radio")
     fun setMediaProjectionForRadio(projection: MediaProjection) {
         try {
+            // Stop file music if running
+            musicStreamManager.stopStreaming()
             systemAudioCaptureManager.setMediaProjection(projection)
             val success = systemAudioCaptureManager.startSystemLoopbackCapture()
             if (success) {
                 _isRadioActive.value = true
+                _radioModeTitle.value = "System Audio (Spotify/YT/Music)"
+                hostServer?.broadcastRadioState(true, _radioModeTitle.value)
                 _snackbarMessage.value = "System Audio Capture active — Streaming music"
             } else {
                 _isRadioActive.value = false
@@ -321,9 +369,47 @@ class SplinterMeshViewModel(application: Application) : AndroidViewModel(applica
         }
     }
 
+    // Local Music File Streaming
+    fun loadMusicTrack(uri: Uri) {
+        // Stop system audio capture if active
+        if (systemAudioCaptureManager.isBroadcasting.value) {
+            systemAudioCaptureManager.stopBroadcasting()
+        }
+        musicStreamManager.loadTrack(uri)
+        _snackbarMessage.value = "Loaded: ${musicStreamManager.trackTitle.value ?: "Music File"}"
+    }
+
+    fun playMusic() {
+        if (systemAudioCaptureManager.isBroadcasting.value) {
+            systemAudioCaptureManager.stopBroadcasting()
+        }
+        musicStreamManager.play()
+    }
+
+    fun pauseMusic() {
+        musicStreamManager.pause()
+    }
+
+    fun stopMusic() {
+        musicStreamManager.stopStreaming()
+    }
+
+    fun seekMusic(positionMs: Long) {
+        musicStreamManager.seekTo(positionMs)
+    }
+
+    fun setClientRadioVolume(volume: Float) {
+        val clamped = volume.coerceIn(0f, 1f)
+        _clientRadioVolume.value = clamped
+        audioMeshEngine.setRadioVolume(clamped)
+    }
+
     fun stopRadio() {
         systemAudioCaptureManager.stopBroadcasting()
+        musicStreamManager.stopStreaming()
+        audioMeshEngine.setRadioTransmitting(false)
         _isRadioActive.value = false
+        _radioModeTitle.value = "Inactive"
         if (_operatingMode.value == OperatingMode.HOST) {
             hostServer?.broadcastRadioState(false, "Inactive")
         }
